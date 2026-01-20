@@ -6,6 +6,9 @@ This document lists immediate, low-risk changes that pave the way for the full p
 
 ## 1. Fix rtr_http.inc.c Block Handling (HIGH PRIORITY)
 
+**PR:** [#25269](https://github.com/radareorg/radare2/pull/25269) (OPEN)
+**Related Issue:** [#24043](https://github.com/radareorg/radare2/issues/24043)
+
 **File:** `libr/core/rtr_http.inc.c` (lines 200-231, 275-280)
 
 **Current Issue:**
@@ -48,11 +51,15 @@ static char *cmdstr_isolated(RCore *core, const char *cmd) {
 
 ---
 
-## 2. Add r_core_read_at_buf() Helper
+## 2. ~~Add r_core_read_at_buf() Helper~~ (REDUNDANT)
+
+**PR:** [#25270](https://github.com/radareorg/radare2/pull/25270) (CLOSED - unnecessary)
+
+**Status:** `r_io_read_at(core->io, addr, buf, len)` already provides this functionality without any wrapper needed. The R_CRITICAL locking in the proposed helper protected nothing since `r_io_read_at` is stateless.
 
 **File:** `libr/core/cio.c`
 
-**Purpose:** Allow reading at arbitrary address without modifying core state.
+**Purpose:** ~~Allow reading at arbitrary address without modifying core state.~~ Use `r_io_read_at()` directly instead.
 
 **Implementation:**
 ```c
@@ -129,6 +136,8 @@ R_API bool r_core_seek(RCore *core, ut64 addr, bool rb) {
 ---
 
 ## 4. Fix Task Console Context Leak
+
+**PR:** [#25271](https://github.com/radareorg/radare2/pull/25271) (OPEN)
 
 **File:** `libr/core/task.c` (lines 348-354)
 
@@ -273,6 +282,8 @@ R_API int r_core_block_size(RCore *core, int bsize) {
 
 ## 7. Document Thread-Unsafe Functions
 
+**Status:** DONE - Created `libr/core/THREAD_SAFETY.md`
+
 **File:** Create `libr/core/THREAD_SAFETY.md`
 
 ```markdown
@@ -303,6 +314,8 @@ R_API int r_core_block_size(RCore *core, int bsize) {
 ---
 
 ## 8. Audit cmdstr() Config Restoration
+
+**Related PRs:** [#25186](https://github.com/radareorg/radare2/pull/25186) (MERGED), [#25073](https://github.com/radareorg/radare2/pull/25073) (MERGED) - fixed color palette propagation in rcorecmdstr
 
 **File:** `libr/core/rtr_http.inc.c` (lines 46-79)
 
@@ -351,6 +364,8 @@ static char *cmdstr(RCore *core, const char *cmd) {
 
 ## 9. Remove Unnecessary Block Operations in HTTP Loop
 
+**PR:** Part of [#25269](https://github.com/radareorg/radare2/pull/25269) (OPEN)
+
 **File:** `libr/core/rtr_http.inc.c`
 
 **Lines 225-231, 275-280 can be simplified:**
@@ -377,6 +392,8 @@ Simply don't swap blocks at all. Let each command read what it needs via `r_io_r
 ---
 
 ## 10. Add Task Isolation Level Config
+
+**PR:** [#25273](https://github.com/radareorg/radare2/pull/25273) (OPEN)
 
 **File:** `libr/core/cconfig.c`
 
@@ -410,16 +427,17 @@ static bool cb_tasks_isolation(void *user, void *data) {
 
 ## Priority Order
 
-1. **#2 - Add r_core_read_at_buf()** - Foundation for everything else
+1. **#1 - Fix rtr_http.inc.c** - Most visible issue ([PR #25269](https://github.com/radareorg/radare2/pull/25269) OPEN)
 2. **#3 - Block validity tracking** - Helps detect stale data
-3. **#1 - Fix rtr_http.inc.c** - Most visible issue
-4. **#6 - Add R_CRITICAL to block_size** - Prevents crashes
-5. **#4 - Fix task console context leak** - Memory leak fix
-6. **#8 - Audit cmdstr() config** - Correctness fix
-7. **#7 - Document thread safety** - Helps contributors
-8. **#5 - Enable CUSTOMCORE** - Enables real isolation
-9. **#9 - Remove HTTP block swaps** - Performance improvement
-10. **#10 - Task isolation config** - User-facing feature
+3. **#6 - Add R_CRITICAL to block_size** - Prevents crashes
+4. **#4 - Fix task console context leak** - Memory leak fix ([PR #25271](https://github.com/radareorg/radare2/pull/25271) OPEN)
+5. **#8 - Audit cmdstr() config** - Correctness fix (partially addressed by merged PRs)
+6. **#7 - Document thread safety** - DONE
+7. **#5 - Enable CUSTOMCORE** - Enables real isolation
+8. **#9 - Remove HTTP block swaps** - Performance improvement (part of PR #25269)
+9. **#10 - Task isolation config** - User-facing feature ([PR #25273](https://github.com/radareorg/radare2/pull/25273) OPEN)
+
+~~#2 - Add r_core_read_at_buf()~~ - REDUNDANT, use `r_io_read_at()` directly
 
 ---
 
@@ -447,22 +465,22 @@ r2 -qc '&pd 100; &px 100; &?t; ?t-' /bin/ls
 
 ## Files to Modify (Summary)
 
-| File | Changes |
-|------|---------|
-| `libr/core/cio.c` | Add `r_core_read_at_buf()`, update `r_core_block_read()` |
-| `libr/core/core.c` | Add R_CRITICAL to `r_core_block_size()`, init block_valid |
-| `libr/core/rtr_http.inc.c` | Simplify block handling, fix cmdstr() |
-| `libr/core/task.c` | Fix cons context leak, enable CUSTOMCORE |
-| `libr/core/cconfig.c` | Add tasks.isolation config |
-| `libr/include/r_core.h` | Add block_addr, block_valid fields, new API |
-| `libr/core/THREAD_SAFETY.md` | New documentation file |
+| File | Changes | PR Status |
+|------|---------|-----------|
+| `libr/core/cio.c` | Update `r_core_block_read()` | - |
+| `libr/core/core.c` | Add R_CRITICAL to `r_core_block_size()`, init block_valid | - |
+| `libr/core/rtr_http.inc.c` | Simplify block handling, fix cmdstr() | [#25269](https://github.com/radareorg/radare2/pull/25269) OPEN |
+| `libr/core/task.c` | Fix cons context leak, enable CUSTOMCORE | [#25271](https://github.com/radareorg/radare2/pull/25271) OPEN |
+| `libr/core/cconfig.c` | Add tasks.isolation config | [#25273](https://github.com/radareorg/radare2/pull/25273) OPEN |
+| `libr/include/r_core.h` | Add block_addr, block_valid fields | - |
+| `libr/core/THREAD_SAFETY.md` | New documentation file | DONE |
 
 ---
 
 ## Estimated Total Effort
 
-- **Minimal viable changes** (#1, #2, #3, #6): ~4 hours
-- **Full now.md implementation**: ~10 hours
+- **Minimal viable changes** (#1, #3, #6): ~4 hours
+- **Full now.md implementation**: ~8 hours
 - **Testing and stabilization**: ~4 hours
 
 Total: **~18 hours** to significantly improve thread safety without the full architectural overhaul.
