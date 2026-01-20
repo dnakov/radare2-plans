@@ -14,20 +14,21 @@ The solution is to introduce **RCoreTaskContext** - a per-task execution context
 
 The following state is currently shared and mutable:
 
-| Field | Type | Purpose | Thread-Safety Issue |
-|-------|------|---------|---------------------|
-| `addr` | `ut64` | Current seek position | Modified by seek commands, read by all |
-| `blocksize` | `ut32` | Size of cached block | Modified by `b` command |
-| `block` | `ut8*` | Cached data at current addr | Read/written by many commands |
-| `config` | `RConfig*` | All eval variables | Modified by `e` command, read everywhere |
-| `cons` | `RCons*` | Console output context | Contains mutable palette, grep state |
-| `io` | `RIO*` | I/O layer | File descriptors shared |
-| `anal` | `RAnal*` | Analysis database | Functions, xrefs, hints |
-| `flags` | `RFlag*` | Named addresses | Already has R_CRITICAL protection |
+| Field       | Type       | Purpose                     | Thread-Safety Issue                      |
+| ----------- | ---------- | --------------------------- | ---------------------------------------- |
+| `addr`      | `ut64`     | Current seek position       | Modified by seek commands, read by all   |
+| `blocksize` | `ut32`     | Size of cached block        | Modified by `b` command                  |
+| `block`     | `ut8*`     | Cached data at current addr | Read/written by many commands            |
+| `config`    | `RConfig*` | All eval variables          | Modified by `e` command, read everywhere |
+| `cons`      | `RCons*`   | Console output context      | Contains mutable palette, grep state     |
+| `io`        | `RIO*`     | I/O layer                   | File descriptors shared                  |
+| `anal`      | `RAnal*`   | Analysis database           | Functions, xrefs, hints                  |
+| `flags`     | `RFlag*`   | Named addresses             | Already has R_CRITICAL protection        |
 
 ### Current Workarounds
 
 #### rtr_http.inc.c (lines 200-231, 275-280)
+
 ```c
 // Saves and restores block/addr/blocksize per HTTP request
 ut64 newoff, origoff = core->addr;
@@ -45,12 +46,14 @@ core->blocksize = origblksz;
 ```
 
 This pattern is fragile because:
+
 1. If a command changes blocksize, the saved origblk pointer becomes invalid
 2. If addr changes, block contents are stale
 3. Config changes leak between requests
 4. No protection against concurrent access
 
 #### task.c (lines 334-375, 755-758)
+
 ```c
 // Creates console context clone but NOT block/config isolation
 task->cons_context = r_cons_context_clone (core->cons->context);
@@ -162,11 +165,11 @@ R_API void r_core_task_context_free(RCoreTaskContext *ctx);
 
 Define three isolation levels for task execution:
 
-| Level | Name | Block | Config | Use Case |
-|-------|------|-------|--------|----------|
-| 0 | `SHARED` | Shared | Shared | Legacy behavior, single-threaded |
-| 1 | `SNAPSHOT` | Private copy | Shared | Read-only commands, HTTP server |
-| 2 | `ISOLATED` | Private copy | Cloned | Full parallel execution |
+| Level | Name       | Block        | Config | Use Case                         |
+| ----- | ---------- | ------------ | ------ | -------------------------------- |
+| 0     | `SHARED`   | Shared       | Shared | Legacy behavior, single-threaded |
+| 1     | `SNAPSHOT` | Private copy | Shared | Read-only commands, HTTP server  |
+| 2     | `ISOLATED` | Private copy | Cloned | Full parallel execution          |
 
 ```c
 typedef enum {
@@ -186,6 +189,7 @@ typedef enum {
 2. **Implement context lifecycle functions** in `task.c`
 3. **Add context to RCoreTask struct**
 4. **Create accessor macros** for transition:
+   
    ```c
    #define CORE_ADDR(core) (core->task_ctx ? core->task_ctx->addr : core->addr)
    #define CORE_BLOCK(core) (core->task_ctx ? core->task_ctx->block : core->block)
@@ -201,15 +205,19 @@ typedef enum {
 ### Phase 3: Command Infrastructure (Week 4-6)
 
 1. **Audit all core->block usages** (30 files identified)
+
 2. **Create helper functions** for common patterns:
+   
    ```c
    // Read at specific address into provided buffer
    R_API int r_core_read_at(RCore *core, ut64 addr, ut8 *buf, int len);
-
+   
    // Read at context address into context block
    R_API int r_core_ctx_block_read(RCore *core);
    ```
+
 3. **Migrate high-frequency commands** first:
+   
    - `pd` (disassembly)
    - `px` (hex dump)
    - `af` (analysis)
@@ -241,6 +249,7 @@ typedef enum {
 ### 1. Block Buffer Race Conditions
 
 **Current Problem:**
+
 ```c
 // Thread A                          // Thread B
 r_core_seek(core, 0x1000, true);     r_core_seek(core, 0x2000, true);
@@ -253,6 +262,7 @@ memcpy(local, core->block, 32);      // Thread A reads wrong data!
 ### 2. Config Variable Conflicts
 
 **Current Problem:**
+
 ```c
 // Thread A                          // Thread B
 r_config_set_b(core->config,         r_config_set_b(core->config,
@@ -265,6 +275,7 @@ r_core_cmd_str(core, "pd 10");       // Uses Thread B's setting!
 ### 3. Seek Position Races
 
 **Current Problem:**
+
 ```c
 // Thread A                          // Thread B
 r_core_seek(core, 0x1000, false);    r_core_seek(core, 0x2000, false);
@@ -279,6 +290,7 @@ r_core_cmd(core, "pd");              // Which address gets disassembled?
 **Concern:** RAnal contains linked lists (functions, xrefs) that aren't thread-safe.
 
 **Solution:**
+
 - Read operations: Use reader-writer locks
 - Write operations: Queue mutations, apply in main thread
 - Long-term: Make RAnal internally thread-safe
@@ -288,6 +300,7 @@ r_core_cmd(core, "pd");              // Which address gets disassembled?
 **Current Mitigation:** `RConsContext` per task (already implemented in task.c)
 
 **Additional Work:**
+
 - Ensure grep state is per-context
 - Ensure color palette is per-context (done via clone)
 
@@ -433,25 +446,27 @@ r_core_task_context_new(core, R_CORE_TASK_ISOLATION_SNAPSHOT);
 
 ## Risks and Mitigations
 
-| Risk | Likelihood | Impact | Mitigation |
-|------|------------|--------|------------|
-| Callback side effects from config | High | Medium | Audit callbacks, disable in isolated mode |
-| RAnal corruption from parallel writes | Medium | High | Queue writes, apply in main thread |
-| Memory bloat from block copies | Low | Medium | Lazy block reading, configurable sizes |
-| ABI breakage | High | Low | Keep old fields, add context as optional |
-| Performance regression | Medium | Medium | Profile, optimize hot paths |
+| Risk                                  | Likelihood | Impact | Mitigation                                |
+| ------------------------------------- | ---------- | ------ | ----------------------------------------- |
+| Callback side effects from config     | High       | Medium | Audit callbacks, disable in isolated mode |
+| RAnal corruption from parallel writes | Medium     | High   | Queue writes, apply in main thread        |
+| Memory bloat from block copies        | Low        | Medium | Lazy block reading, configurable sizes    |
+| ABI breakage                          | High       | Low    | Keep old fields, add context as optional  |
+| Performance regression                | Medium     | Medium | Profile, optimize hot paths               |
 
 ---
 
 ## Appendix: Current core->block Usage Patterns
 
 ### Pattern 1: Read at current address
+
 ```c
 // Most common - use block as cache for current seek
 r_core_print_hexdump(core, core->addr, core->block, core->blocksize, ...);
 ```
 
 ### Pattern 2: Read at specific address
+
 ```c
 // Read elsewhere, restore block after
 ut64 orig = core->addr;
@@ -461,6 +476,7 @@ r_core_seek(core, orig, true);
 ```
 
 ### Pattern 3: Transform and write back
+
 ```c
 // Modify block, write to file
 memcpy(buf, core->block, len);
@@ -470,6 +486,7 @@ r_core_block_read(core);  // refresh cache
 ```
 
 ### Pattern 4: Temporary block allocation
+
 ```c
 // Need different size
 ut8 *tmp = malloc(size);
